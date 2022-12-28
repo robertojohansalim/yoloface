@@ -17,9 +17,8 @@ from utils.preprocess_utils import align_faces
 from utils.general import check_img_size, non_max_suppression_face, \
     scale_coords,scale_coords_landmarks,filter_boxes
 
-class YoloDetector:
-    # def __init__(self, weights_name='yolov5n_state_dict.pt',config_name='yolov5n.yaml', device='cuda:0', min_face=100, target_size=None, frontal=False):
-    def __init__(self, weights_name='yolov5st.pt',config_name='yolov5s.yaml', device='cuda:0', min_face=100, target_size=None, frontal=False):
+class YoloDetectorONNX:
+    def __init__(self,onnx_weight_name='yolov5s.onnx', weights_name='yolov5n_state_dict.pt',config_name='yolov5n.yaml', device='cpu', min_face=100, target_size=None, frontal=False):
             """
             weights_name: name of file with network weights in weights/ folder.
             config_name: name of .yaml config with network configuration from models/ folder.
@@ -34,25 +33,45 @@ class YoloDetector:
             self.target_size = target_size
             self.min_face = min_face
             self.frontal = frontal
-            if self.frontal:
-                self.anti_profile = joblib.load(os.path.join(self._class_path, 'models/anti_profile/anti_profile_xgb_new.pkl'))
-            self.detector = self.init_detector(weights_name,config_name)
+            # if self.frontal:
+            #     self.anti_profile = joblib.load(os.path.join(self._class_path, 'models/anti_profile/anti_profile_xgb_new.pkl'))
+            # self.detector = self.init_detector(weights_name,config_name)
+            self.detector = self.init_detector_onnx(onnx_weight_name)
 
-    def init_detector(self,weights_name,config_name):
+    def init_detector_onnx(self,onnx_weight_name):
         print(self.device)
-        model_path = os.path.join(self._class_path,'weights/',weights_name)
-        print(model_path)
-        config_path = os.path.join(self._class_path,'models/',config_name)
-        state_dict = torch.load(model_path)
-        detector = Model(cfg=config_path)
-        detector.load_state_dict(state_dict)
-        detector = detector.to(self.device).float().eval()
-        for m in detector.modules():
-            if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU]:
-                m.inplace = True  # pytorch 1.7.0 compatibility
-            elif type(m) is Conv:
-                m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
-        return detector
+        onnx_path = os.path.join(self._class_path,'weights/',onnx_weight_name)
+
+        return cv2.dnn.readNetFromONNX(onnx_path)
+
+        # print(model_path)
+        # config_path = os.path.join(self._class_path,'models/',config_name)
+        # state_dict = torch.load(model_path)
+        # detector = Model(cfg=config_path)
+        # detector.load_state_dict(state_dict)
+        # detector = detector.to(self.device).float().eval()
+        # for m in detector.modules():
+        #     if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU]:
+        #         m.inplace = True  # pytorch 1.7.0 compatibility
+        #     elif type(m) is Conv:
+        #         m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
+        # return detector
+
+    # def init_detector(self,weights_name,config_name):
+    #     print(self.device)
+    #     model_path = os.path.join(self._class_path,'weights/',weights_name)
+    #     print(model_path)
+    #     config_path = os.path.join(self._class_path,'models/',config_name)
+    #     state_dict = torch.load(model_path)
+    #     detector = Model(cfg=config_path)
+    #     detector.load_state_dict(state_dict)
+    #     detector = detector.to(self.device).float().eval()
+    #     for m in detector.modules():
+    #         if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU]:
+    #             m.inplace = True  # pytorch 1.7.0 compatibility
+    #         elif type(m) is Conv:
+    #             m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
+    #     return detector
     
     def _preprocess(self,imgs):
         """
@@ -66,8 +85,8 @@ class YoloDetector:
                 if r < 1:  
                     img = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=cv2.INTER_LINEAR)
 
-            imgsz = check_img_size(max(img.shape[:2]), s=self.detector.stride.max())  # check img_size
-            img = letterbox(img, new_shape=imgsz)[0]
+            # imgsz = check_img_size(max(img.shape[:2]), s=self.detector.stride.max())  # check img_size
+            # img = letterbox(img, new_shape=imgsz)[0]
             pp_imgs.append(img)
         pp_imgs = np.array(pp_imgs)
         pp_imgs = pp_imgs.transpose(0, 3, 1, 2)
@@ -87,8 +106,6 @@ class YoloDetector:
         landmarks = [[] for i in range(len(origimgs))]
         
         pred = non_max_suppression_face(pred, conf_thres, iou_thres)
-        print("NON MAX SUPPRESSION")
-        print(pred)
         
         for i in range(len(origimgs)):
             img_shape = origimgs[i].shape
@@ -143,20 +160,35 @@ class YoloDetector:
                 points: list of arrays with coordinates of 5 facial keypoints (eyes, nose, lips corners).
         '''
         # Pass input images through face detector
-        if type(imgs) != list:
-            images = [imgs]
-        else:
-            images = imgs
-        origimgs = copy.deepcopy(images)
+        # if type(imgs) != list:
+        #     images = [imgs]
+        # else:
+        #     images = imgs
+        origimgs = copy.deepcopy(imgs)
         
-        images = self._preprocess(images)
-        with torch.inference_mode(): # change this with torch.no_grad() for pytorch <1.8 compatibility
-            pred = self.detector(images)[0]
-            print("OUT SHAPE:")
-            print(pred.shape)
-            print(pred)
+        # images = self._preprocess(images)
+        input_img = imgs.astype(np.float32)
+        # input_img = cv2.resize(input_img, (640, 640))
+
+        mean = np.array([0.485, 0.456, 0.406]) * 255.0
+        scale = 1 / 255.0
+        std = [0.229, 0.224, 0.225]
+
+        input_blob = cv2.dnn.blobFromImage(
+            image=input_img,
+            scalefactor=scale,
+            size=(640, 640),  # img target size
+            mean=mean,
+            swapRB=True,  # BGR -> RGB
+            crop=True  # center crop
+        )
+        # with torch.inference_mode(): # change this with torch.no_grad() for pytorch <1.8 compatibility
+            # pred = self.detector.(images)[0]
+        self.detector.setInput(input_blob)
+        # OpenCV DNN inference
+        pred = self.detector.forward()[0]
             #pred = non_max_suppression_face(pred, conf_thres, iou_thres)
-        bboxes, points = self._postprocess(images, origimgs, pred, conf_thres, iou_thres)
+        bboxes, points = self._postprocess(imgs, origimgs, pred, conf_thres, iou_thres)
 
         return bboxes, points
 
@@ -164,4 +196,13 @@ class YoloDetector:
         return self.predict(*args)
 
 if __name__=='__main__':
-    a = YoloDetector()
+    from PIL import Image
+    model = YoloDetectorONNX()
+
+
+    img_path = "./test_img/single_face.png"
+    print("Loading Image")
+    orgimg = np.array(Image.open(img_path))
+    print("Predicting")
+    bboxes,points = model.predict(orgimg)
+    print(bboxes, points)
